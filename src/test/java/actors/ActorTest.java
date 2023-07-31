@@ -32,7 +32,7 @@ class ActorTest {
             applySchedulerToListener(scheduler, listenerHolder, iterator);
         };
         Runnable onDone = () -> listenerHolder.get().onComplete();
-        scheduler.schedule(iterator.hasNext() ? onNext : onDone, 100L, TimeUnit.MILLISECONDS);
+        scheduler.schedule(iterator.hasNext() ? onNext : onDone, 500L, TimeUnit.MILLISECONDS);
     }
 
     static class MultiExcept extends Exception {
@@ -48,19 +48,17 @@ class ActorTest {
 
     @Test
     void aTest() throws InterruptedException {
-        asyncActor(Executors.newSingleThreadScheduledExecutor(), List.of(3, 1, 2, 4, 6, 5))
-                .withEach(System.out::println)
-                .map(x -> x * x)
-                .withEach(System.out::println)
+        asyncActor(Executors.newSingleThreadScheduledExecutor(), List.of(2, 4, 5, 6, 3))
+                .withEach(x -> System.out.println("inspecting :" + x))
                 .flatMap(x -> {
                              if (x % 2 == 0) {
                                  return asyncActor(Executors.newSingleThreadScheduledExecutor(),
-                                                   Stream.iterate(0, y1 -> y1 + 1)
+                                                   Stream.iterate(0, y -> y + 1)
                                                          .limit(x)
                                                          .toList())
                                          .map(y -> "async %d %d".formatted(x, y));
                              } else {
-                                 return StreamActor.<Integer, RuntimeException>of(Stream.iterate(0, y1 -> y1 + 1)
+                                 return StreamActor.<Integer, RuntimeException>of(Stream.iterate(0, y -> y + 1)
                                                                                         .limit(x)
                                                                                         .toList())
                                                    .map(y -> "sync %d %d".formatted(x, y));
@@ -68,11 +66,10 @@ class ActorTest {
                          },
                          Collectors.collectingAndThen(Collectors.toList(),
                                                       MultiExcept::new))
+                .withEach(x -> System.out.println("flattened value: " + x))
+                .withCompletion(() -> System.out.println("DONE Stream"))
                 .collect(Collectors.toList())
-                .withValue(val -> {
-                    System.out.println("on value");
-                    val.forEach(System.out::println);
-                })
+                .withValue(val -> System.out.println("on value: " + val))
                 .withError(err -> {
                     System.out.println("on error");
                     err.printStackTrace();
