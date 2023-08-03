@@ -1,50 +1,74 @@
 package actors;
 
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
-public interface ValueActor<Val, Err> {
-    void perform(ValueListener<Val, Err> listener);
+public final class ValueActor<Val, Err> {
+    private final Consumer<ValueListener<Val, Err>> performer;
 
-    default void perform() {
-        perform(ValueListener.nop());
+    public ValueActor(Consumer<ValueListener<Val, Err>> performer) {this.performer = performer;}
+
+    public void perform() {
+        performer.accept(ValueListener.nop());
     }
 
-    default void performAwaiting() throws InterruptedException {
+    public void performAwaiting() throws InterruptedException {
         CountDownLatch latch = new CountDownLatch(1);
         this.anyway(latch::countDown)
             .perform();
         latch.await();
     }
 
-    static <Val, Err> ValueActor<Val, Err> of(Val val) {
-        return listener -> listener.onValue(val);
+    public <Exc extends Throwable> Val performAwaiting(Function<Err, Exc> exceptor) throws InterruptedException, Exc {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Optional<Val>> result = new AtomicReference<>(Optional.empty());
+        AtomicReference<Optional<Err>> error = new AtomicReference<>(Optional.empty());
+        this.map(Optional::of)
+            .withValue(result::set)
+            .mapError(Optional::of)
+            .withError(error::set)
+            .anyway(latch::countDown)
+            .perform();
+        latch.await();
+        if (error.get().isPresent()) {
+            throw exceptor.apply(error.get().get());
+        } else if (result.get().isPresent()) {
+            return result.get().get();
+        } else {
+            throw new RuntimeException("algorithmic error, this exception should not be possible");
+        }
     }
 
-    static <Val, Err> ValueActor<Val, Err> err(Err err) {
-        return listener -> listener.onError(err);
+    public static <Val, Err> ValueActor<Val, Err> of(Val val) {
+        return new ValueActor<>(listener -> listener.onValue(val));
     }
 
-    default ValueActor<Err, Val> flip() {
-        return listener -> perform(listener.flip());
+    public static <Val, Err> ValueActor<Val, Err> err(Err err) {
+        return new ValueActor<>(listener -> listener.onError(err));
     }
 
-    default ValueActor<Val, Err> withValue(Consumer<Val> onValue) {
-        return listener -> perform(listener.withValue(onValue));
+    public ValueActor<Err, Val> flip() {
+        return new ValueActor<>(listener -> performer.accept(listener.flip()));
     }
 
-    default ValueActor<Val, Err> withError(Consumer<Err> onError) {
+    public ValueActor<Val, Err> withValue(Consumer<Val> onValue) {
+        return new ValueActor<>(listener -> performer.accept(listener.withValue(onValue)));
+    }
+
+    public ValueActor<Val, Err> withError(Consumer<Err> onError) {
         return flip().withValue(onError).flip();
     }
 
-    default ValueActor<Val, Err> anyway(Runnable onDone) {
-        return listener -> perform(listener.anyway(onDone));
+    public ValueActor<Val, Err> anyway(Runnable onDone) {
+        return new ValueActor<>(listener -> performer.accept(listener.anyway(onDone)));
     }
 
 
-    default <MVal> ValueActor<MVal, Err> map(Function<Val, MVal> mapper) {
-        return listener -> perform(new ValueListener<>() {
+    public <MVal> ValueActor<MVal, Err> map(Function<Val, MVal> mapper) {
+        return new ValueActor<>(listener -> performer.accept(new ValueListener<>() {
             @Override
             public void onValue(Val val) {
                 listener.onValue(mapper.apply(val));
@@ -54,42 +78,50 @@ public interface ValueActor<Val, Err> {
             public void onError(Err err) {
                 listener.onError(err);
             }
-        });
+        }));
     }
 
-    default <MVal> ValueActor<MVal, Err> flatMap(Function<Val, ValueActor<MVal, Err>> mapper) {
-        return listener -> perform(new ValueListener<>() {
+    public <MVal> ValueActor<MVal, Err> flatMap(Function<Val, ValueActor<MVal, Err>> mapper) {
+        return new ValueActor<>(listener -> performer.accept(new ValueListener<>() {
             @Override
             public void onValue(Val val) {
-                mapper.apply(val).perform(listener);
+                ValueActor<MVal, Err> mValErrValueActor = mapper.apply(val);
+                mValErrValueActor.performer.accept(listener);
             }
 
             @Override
             public void onError(Err err) {
                 listener.onError(err);
             }
-        });
+        }));
     }
 
-    default <MErr> ValueActor<Val, MErr> mapError(Function<Err, MErr> mapper) {
+    public <MErr> ValueActor<Val, MErr> mapError(Function<Err, MErr> mapper) {
         return flip().map(mapper).flip();
     }
 
-    default <MErr> ValueActor<Val, MErr> flatMapError(Function<Err, ValueActor<Val, MErr>> mapper) {
+    public <MErr> ValueActor<Val, MErr> flatMapError(Function<Err, ValueActor<Val, MErr>> mapper) {
         return flip().flatMap(mapper.andThen(ValueActor::flip)).flip();
     }
 
-    default <MVal> StreamActor<MVal, Err> mapStreaming(Function<Val, StreamActor<MVal, Err>> mapper) {
-        return listener -> this.perform(new ValueListener<>() {
-            @Override
-            public void onValue(Val val) {
-                mapper.apply(val).perform(listener);
-            }
+    public <MVal> StreamActor<MVal, Err> mapStreaming(Function<Val, StreamActor<MVal, Err>> mapper) {
+        return new StreamActor<>(listener -> {
+            AtomicReference<StreamListener<MVal, Err>> listenerHolder = new AtomicReference<>(listener);
+            performer.accept(new ValueListener<>() {
+                @Override
+                public void onValue(Val val) {
+                    mapper.apply(val)
+                          .withEach(mVal -> listenerHolder.set(listenerHolder.get().onValue(mVal)))
+                          .withError(err -> listenerHolder.get().onError(err))
+                          .withCompletion(() -> listenerHolder.get().onComplete())
+                          .perform();
+                }
 
-            @Override
-            public void onError(Err err) {
-                listener.onError(err);
-            }
+                @Override
+                public void onError(Err err) {
+                    listener.onError(err);
+                }
+            });
         });
     }
 }

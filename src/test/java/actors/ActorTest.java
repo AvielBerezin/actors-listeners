@@ -18,9 +18,9 @@ class ActorTest {
     <Value> StreamActor<Value, RuntimeException> asyncActor(
             ScheduledExecutorService scheduler,
             Collection<Value> collection) {
-        return listener -> applySchedulerToListener(scheduler,
-                                                    new AtomicReference<>(listener),
-                                                    collection.iterator());
+        return new StreamActor<>(listener -> applySchedulerToListener(scheduler,
+                                                                      new AtomicReference<>(listener),
+                                                                      collection.iterator()));
     }
 
     private static <Value> void applySchedulerToListener(
@@ -103,5 +103,41 @@ class ActorTest {
                 .collect(Collectors.toList())
                 .withValue(xs -> System.out.println("finally got " + xs))
                 .performAwaiting();
+    }
+
+    static class MyException extends Exception {
+        public MyException() {
+        }
+
+        public MyException(String message) {
+            super(message);
+        }
+
+        public MyException(String message, Throwable cause) {
+            super(message, cause);
+        }
+
+        public MyException(Throwable cause) {
+            super(cause);
+        }
+
+        public MyException(String message, Throwable cause, boolean enableSuppression, boolean writableStackTrace) {
+            super(message, cause, enableSuppression, writableStackTrace);
+        }
+    }
+
+    @Test
+    void performAwaiting() throws InterruptedException, MyException {
+        List<Integer> result = ValueActor.<Integer, String>of(1)
+                                         .withValue(val -> System.out.println("starting with " + val))
+                                         .map(val -> List.of(1, val, 2, val, 3))
+                                         .withValue(vals -> System.out.println("mapped to " + vals))
+                                         .withError(msg -> System.err.println("before error insertion error: " + msg))
+                                         .flatMap(ints -> ValueActor.<List<Integer>, String>err("ohh nooo"))
+                                         .withValue(val -> System.out.println("inside perform " + val))
+                                         .withValue(val -> System.out.println("ending with this message"))
+                                         .withError(msg -> System.err.println("there is an error: " + msg))
+                                         .performAwaiting(MyException::new);
+        System.out.println("result = " + result);
     }
 }
