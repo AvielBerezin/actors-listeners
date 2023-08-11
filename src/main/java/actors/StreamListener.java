@@ -99,15 +99,15 @@ public interface StreamListener<Val, Err> {
         };
     }
 
-    default StreamListener<Val, Err> filter(Predicate<Val> predicate) {
+    default StreamListener<Val, Err> fromFilter(Predicate<Val> predicate) {
         return new StreamListener<>() {
             @Override
             public StreamListener<Val, Err> onValue(Val val) {
                 if (predicate.test(val)) {
                     return StreamListener.this.onValue(val)
-                                              .filter(predicate);
+                                              .fromFilter(predicate);
                 } else {
-                    return StreamListener.this.filter(predicate);
+                    return StreamListener.this.fromFilter(predicate);
                 }
             }
 
@@ -136,14 +136,14 @@ public interface StreamListener<Val, Err> {
         };
     }
 
-    default <FVal> StreamListener<FVal, Err> fromFilter(Function<FVal, Optional<Val>> mapper) {
+    default <FVal> StreamListener<FVal, Err> fromMapFilter(Function<FVal, Optional<Val>> mapper) {
         return new StreamListener<>() {
             @Override
             public StreamListener<FVal, Err> onValue(FVal fVal) {
                 return mapper.apply(fVal)
                              .map(StreamListener.this::onValue)
                              .orElse(StreamListener.this)
-                             .fromFilter(mapper);
+                             .fromMapFilter(mapper);
             }
 
             @Override
