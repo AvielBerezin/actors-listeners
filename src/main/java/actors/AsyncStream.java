@@ -1,5 +1,8 @@
 package actors;
 
+import collectors.Collectors0;
+import data.Singleton;
+
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -105,8 +108,8 @@ public final class AsyncStream<Val, Err> {
                                                                        Collector<Err, ErrAcc, MErr> errCollector) {
         return this.asyncFlatMap(val -> mapper.apply(val)
                                               .mapStreaming(mVal -> mVal.map(List::of)
-                                                                   .<AsyncStream<MVal, Err>>map(AsyncStream::of)
-                                                                   .orElse(AsyncStream.of(List.of()))),
+                                                                        .<AsyncStream<MVal, Err>>map(AsyncStream::of)
+                                                                        .orElse(AsyncStream.of(List.of()))),
                                  errCollector);
     }
 
@@ -321,6 +324,30 @@ public final class AsyncStream<Val, Err> {
                    .filterMap(Function.identity());
     }
 
+    public <MVal, MErr> AsyncStream<MVal, OrdOperationError<Err, MErr>> asyncOrdFlatMap(Function<Val, AsyncStream<MVal, MErr>> mapper) {
+        return new AsyncStream<>(listener -> {
+            StreamListenerHolder<MVal, OrdOperationError<Err, MErr>> listenerHolder = new StreamListenerHolder<>(listener);
+            this.asyncOrdMap(val -> mapper.apply(val)
+                                          .withEach(listenerHolder::notifyValue)
+                                          .collect(Collectors0.ignoring()))
+                .withError(listenerHolder::notifyError)
+                .withCompletion(listenerHolder::notifyComplete)
+                .perform();
+        });
+    }
+
+    public <Res, MErr> AsyncValue<Res, OrdOperationError<Err, MErr>> asyncOrdCollect(Res init,
+                                                                                     BiFunction<Res, Val, AsyncValue<Res, MErr>> acc) {
+        return this.asyncOrdScan(init, acc)
+                   .collect(Collectors0.last())
+                   .map(Optional::get);
+    }
+
+    public <MVal> AsyncStream<MVal, Err> scan(MVal init,
+                                              BiFunction<MVal, Val, MVal> acc) {
+        return new AsyncStream<>(listener -> performer.accept(listener.onValue(init).fromAcc(init, acc)));
+    }
+
     public <MVal> AsyncStream<MVal, Err> map(Function<Val, MVal> mapper) {
         return new AsyncStream<>(listener -> performer.accept(listener.from(mapper)));
     }
@@ -341,5 +368,13 @@ public final class AsyncStream<Val, Err> {
                 .withCompletion(() -> listener.onValue(collector.finisher().apply(acc)))
                 .perform();
         });
+    }
+
+    public <MErr> AsyncStream<Val, MErr> mapError(Function<Err, MErr> mapper) {
+        return new AsyncStream<>(listener -> this.performer.accept(listener.fromError(mapper)));
+    }
+
+    public <MErr> AsyncStream<Val, MErr> catchError(Function<Err, AsyncValue<Singleton, MErr>> catcher) {
+        return new AsyncStream<>(listener -> this.performer.accept(listener.fromCatcher(catcher)));
     }
 }

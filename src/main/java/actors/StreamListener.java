@@ -1,6 +1,9 @@
 package actors;
 
+import data.Singleton;
+
 import java.util.Optional;
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -144,6 +147,67 @@ public interface StreamListener<Val, Err> {
                              .map(StreamListener.this::onValue)
                              .orElse(StreamListener.this)
                              .fromFilterMap(mapper);
+            }
+
+            @Override
+            public void onError(Err err) {
+                StreamListener.this.onError(err);
+            }
+
+            @Override
+            public void onComplete() {
+                StreamListener.this.onComplete();
+            }
+        };
+    }
+
+    default <FErr> StreamListener<Val, FErr> fromError(Function<FErr, Err> mapper) {
+        return new StreamListener<>() {
+            @Override
+            public StreamListener<Val, FErr> onValue(Val val) {
+                return StreamListener.this.onValue(val).fromError(mapper);
+            }
+
+            @Override
+            public void onError(FErr fErr) {
+                StreamListener.this.onError(mapper.apply(fErr));
+            }
+
+            @Override
+            public void onComplete() {
+                StreamListener.this.onComplete();
+            }
+        };
+    }
+
+    default <FErr> StreamListener<Val, FErr> fromCatcher(Function<FErr, AsyncValue<Singleton, Err>> catcher) {
+        return new StreamListener<>() {
+            @Override
+            public StreamListener<Val, FErr> onValue(Val val) {
+                return StreamListener.this.onValue(val).fromCatcher(catcher);
+            }
+
+            @Override
+            public void onError(FErr fErr) {
+                catcher.apply(fErr)
+                       .withValue(ignoring -> StreamListener.this.onComplete())
+                       .withError(StreamListener.this::onError)
+                       .perform();
+            }
+
+            @Override
+            public void onComplete() {
+                StreamListener.this.onComplete();
+            }
+        };
+    }
+
+    default <FVal> StreamListener<FVal, Err> fromAcc(Val init, BiFunction<Val, FVal, Val> acc) {
+        return new StreamListener<>() {
+            @Override
+            public StreamListener<FVal, Err> onValue(FVal fVal) {
+                Val next = acc.apply(init, fVal);
+                return StreamListener.this.onValue(next).fromAcc(next, acc);
             }
 
             @Override
