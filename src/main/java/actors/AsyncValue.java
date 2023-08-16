@@ -6,10 +6,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
-public final class ValueActor<Val, Err> {
+public final class AsyncValue<Val, Err> {
     private final Consumer<ValueListener<Val, Err>> performer;
 
-    public ValueActor(Consumer<ValueListener<Val, Err>> performer) {this.performer = performer;}
+    public AsyncValue(Consumer<ValueListener<Val, Err>> performer) {this.performer = performer;}
 
     public void perform() {
         performer.accept(ValueListener.nop());
@@ -22,7 +22,7 @@ public final class ValueActor<Val, Err> {
         latch.await();
     }
 
-    public <Exc extends Throwable> Val performAwaiting(Function<Err, Exc> exceptor) throws InterruptedException, Exc {
+    public <Exc extends Throwable> Val await(Function<Err, Exc> exceptor) throws InterruptedException, Exc {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<Optional<Val>> result = new AtomicReference<>(Optional.empty());
         AtomicReference<Optional<Err>> error = new AtomicReference<>(Optional.empty());
@@ -42,33 +42,47 @@ public final class ValueActor<Val, Err> {
         }
     }
 
-    public static <Val, Err> ValueActor<Val, Err> of(Val val) {
-        return new ValueActor<>(listener -> listener.onValue(val));
+    public static <Val, Err> AsyncValue<Val, Err> of(Val val) {
+        return new AsyncValue<>(listener -> listener.onValue(val));
     }
 
-    public static <Val, Err> ValueActor<Val, Err> err(Err err) {
-        return new ValueActor<>(listener -> listener.onError(err));
+    public static <Val, Err> AsyncValue<Val, Err> err(Err err) {
+        return new AsyncValue<>(listener -> listener.onError(err));
     }
 
-    public ValueActor<Err, Val> flip() {
-        return new ValueActor<>(listener -> performer.accept(listener.flip()));
+    public AsyncValue<Err, Val> flip() {
+        return new AsyncValue<>(listener -> performer.accept(listener.flip()));
     }
 
-    public ValueActor<Val, Err> withValue(Consumer<Val> onValue) {
-        return new ValueActor<>(listener -> performer.accept(listener.withValue(onValue)));
+    public AsyncValue<Val, Err> withValue(Consumer<Val> onValue) {
+        return new AsyncValue<>(listener -> performer.accept(listener.withValue(onValue)));
     }
 
-    public ValueActor<Val, Err> withError(Consumer<Err> onError) {
+    public AsyncValue<Val, Err> withError(Consumer<Err> onError) {
         return flip().withValue(onError).flip();
     }
 
-    public ValueActor<Val, Err> anyway(Runnable onDone) {
-        return new ValueActor<>(listener -> performer.accept(listener.anyway(onDone)));
+    public AsyncValue<Val, Err> anyway(Runnable onDone) {
+        return new AsyncValue<>(listener -> performer.accept(listener.anyway(onDone)));
     }
 
+    public <MVal> AsyncValue<MVal, Err> flatMap(Function<Val, AsyncValue<MVal, Err>> mapper) {
+        return new AsyncValue<>(listener -> performer.accept(new ValueListener<>() {
+            @Override
+            public void onValue(Val val) {
+                AsyncValue<MVal, Err> mValErrAsyncValue = mapper.apply(val);
+                mValErrAsyncValue.performer.accept(listener);
+            }
 
-    public <MVal> ValueActor<MVal, Err> map(Function<Val, MVal> mapper) {
-        return new ValueActor<>(listener -> performer.accept(new ValueListener<>() {
+            @Override
+            public void onError(Err err) {
+                listener.onError(err);
+            }
+        }));
+    }
+
+    public <MVal> AsyncValue<MVal, Err> map(Function<Val, MVal> mapper) {
+        return new AsyncValue<>(listener -> performer.accept(new ValueListener<>() {
             @Override
             public void onValue(Val val) {
                 listener.onValue(mapper.apply(val));
@@ -81,31 +95,16 @@ public final class ValueActor<Val, Err> {
         }));
     }
 
-    public <MVal> ValueActor<MVal, Err> flatMap(Function<Val, ValueActor<MVal, Err>> mapper) {
-        return new ValueActor<>(listener -> performer.accept(new ValueListener<>() {
-            @Override
-            public void onValue(Val val) {
-                ValueActor<MVal, Err> mValErrValueActor = mapper.apply(val);
-                mValErrValueActor.performer.accept(listener);
-            }
-
-            @Override
-            public void onError(Err err) {
-                listener.onError(err);
-            }
-        }));
+    public <MErr> AsyncValue<Val, MErr> flatMapError(Function<Err, AsyncValue<Val, MErr>> mapper) {
+        return flip().flatMap(mapper.andThen(AsyncValue::flip)).flip();
     }
 
-    public <MErr> ValueActor<Val, MErr> mapError(Function<Err, MErr> mapper) {
+    public <MErr> AsyncValue<Val, MErr> mapError(Function<Err, MErr> mapper) {
         return flip().map(mapper).flip();
     }
 
-    public <MErr> ValueActor<Val, MErr> flatMapError(Function<Err, ValueActor<Val, MErr>> mapper) {
-        return flip().flatMap(mapper.andThen(ValueActor::flip)).flip();
-    }
-
-    public <MVal> StreamActor<MVal, Err> mapStreaming(Function<Val, StreamActor<MVal, Err>> mapper) {
-        return new StreamActor<>(listener -> {
+    public <MVal> AsyncStream<MVal, Err> mapStreaming(Function<Val, AsyncStream<MVal, Err>> mapper) {
+        return new AsyncStream<>(listener -> {
             AtomicReference<StreamListener<MVal, Err>> listenerHolder = new AtomicReference<>(listener);
             performer.accept(new ValueListener<>() {
                 @Override

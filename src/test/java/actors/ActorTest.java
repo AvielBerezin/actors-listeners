@@ -15,10 +15,10 @@ import java.util.stream.Stream;
 
 class ActorTest {
 
-    <Value> StreamActor<Value, RuntimeException> asyncActor(
+    <Value> AsyncStream<Value, RuntimeException> asyncActor(
             ScheduledExecutorService scheduler,
             Collection<Value> collection) {
-        return new StreamActor<>(listener -> applySchedulerToListener(scheduler,
+        return new AsyncStream<>(listener -> applySchedulerToListener(scheduler,
                                                                       new AtomicReference<>(listener),
                                                                       collection.iterator()));
     }
@@ -50,7 +50,7 @@ class ActorTest {
     void aTest() throws InterruptedException {
         asyncActor(Executors.newSingleThreadScheduledExecutor(), List.of(2, 4, 5, 6, 3))
                 .withEach(x -> System.out.println("inspecting :" + x))
-                .flatMap(x -> {
+                .asyncFlatMap(x -> {
                              if (x % 2 == 0) {
                                  return asyncActor(Executors.newSingleThreadScheduledExecutor(),
                                                    Stream.iterate(0, y -> y + 1)
@@ -58,13 +58,13 @@ class ActorTest {
                                                          .toList())
                                          .map(y -> "async %d %d".formatted(x, y));
                              } else {
-                                 return StreamActor.<Integer, RuntimeException>of(Stream.iterate(0, y -> y + 1)
+                                 return AsyncStream.<Integer, RuntimeException>of(Stream.iterate(0, y -> y + 1)
                                                                                         .limit(x)
                                                                                         .toList())
                                                    .map(y -> "sync %d %d".formatted(x, y));
                              }
                          },
-                         Collectors.collectingAndThen(Collectors.toList(),
+                              Collectors.collectingAndThen(Collectors.toList(),
                                                       MultiExcept::new))
                 .withEach(x -> System.out.println("flattened value: " + x))
                 .withCompletion(() -> System.out.println("DONE Stream"))
@@ -91,7 +91,7 @@ class ActorTest {
         asyncActor(Executors.newSingleThreadScheduledExecutor(),
                    List.of("a", "Bbbb", "123", "dasd", "7", "12", "not-a-0number"))
                 .withEach(x -> System.out.println("checking: " + x))
-                .mapFilter(x -> {
+                .filterMap(x -> {
                     try {
                         return Optional.of(Integer.parseInt(x));
                     } catch (NumberFormatException e) {
@@ -128,16 +128,16 @@ class ActorTest {
 
     @Test
     void performAwaiting() throws InterruptedException, MyException {
-        List<Integer> result = ValueActor.<Integer, String>of(1)
+        List<Integer> result = AsyncValue.<Integer, String>of(1)
                                          .withValue(val -> System.out.println("starting with " + val))
                                          .map(val -> List.of(1, val, 2, val, 3))
                                          .withValue(vals -> System.out.println("mapped to " + vals))
                                          .withError(msg -> System.err.println("before error insertion error: " + msg))
-                                         .flatMap(ints -> ValueActor.<List<Integer>, String>err("ohh nooo"))
+                                         .flatMap(ints -> AsyncValue.<List<Integer>, String>err("ohh nooo"))
                                          .withValue(val -> System.out.println("inside perform " + val))
                                          .withValue(val -> System.out.println("ending with this message"))
                                          .withError(msg -> System.err.println("there is an error: " + msg))
-                                         .performAwaiting(MyException::new);
+                                         .await(MyException::new);
         System.out.println("result = " + result);
     }
 }

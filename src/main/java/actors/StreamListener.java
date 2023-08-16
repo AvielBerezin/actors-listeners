@@ -136,14 +136,14 @@ public interface StreamListener<Val, Err> {
         };
     }
 
-    default <FVal> StreamListener<FVal, Err> fromMapFilter(Function<FVal, Optional<Val>> mapper) {
+    default <FVal> StreamListener<FVal, Err> fromFilterMap(Function<FVal, Optional<Val>> mapper) {
         return new StreamListener<>() {
             @Override
             public StreamListener<FVal, Err> onValue(FVal fVal) {
                 return mapper.apply(fVal)
                              .map(StreamListener.this::onValue)
                              .orElse(StreamListener.this)
-                             .fromMapFilter(mapper);
+                             .fromFilterMap(mapper);
             }
 
             @Override
