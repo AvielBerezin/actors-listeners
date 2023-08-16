@@ -13,14 +13,17 @@ class AsyncStreamTest {
         assertThatThrownBy(() -> AsyncStream.<Integer, String>of(List.of(1, 2, 3, 4))
                                             .withEach(i -> System.out.println("inspecting " + i))
                                             .asyncOrdMap(i -> i != 3
-                                                            ? AsyncValue.of((char) ('a' + i))
-                                                            : AsyncValue.err("oh no"))
+                                                              ? AsyncValue.of((char) ('a' + i))
+                                                              : AsyncValue.err("oh no"))
                                             .withEach(System.out::println)
+                                            .mapError(err -> err.accept("main erred with %s"::formatted,
+                                                                        "mapper erred with %s"::formatted,
+                                                                        "main erred with [%s] and mapper erred with [%s]"::formatted))
                                             .withError(System.err::println)
                                             .collect(Collectors.toList())
                                             .withValue(vals -> System.out.println("received result " + vals))
                                             .withError(err -> System.err.println("received error " + err))
                                             .await(Exception::new))
-                .hasMessage("oh no");
+                .hasMessage("mapper erred with oh no");
     }
 }
